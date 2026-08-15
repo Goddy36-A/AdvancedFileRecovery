@@ -74,7 +74,7 @@ public static class FileSignatureCatalog
             Name = "MP4/MOV", Extension = ".mp4", Category = FileCategory.Video,
             Header = FileSignature.B(0x66, 0x74, 0x79, 0x70), // "ftyp" (checked at offset 4 by carver)
             Strategy = SignatureMatchStrategy.StructureAware, // sum ISO-BMFF box sizes
-            MaxSizeBytes = 2 * 1024 * 1024 * 1024, // 2 GB cap for a single carved video
+            MaxSizeBytes = 2L * 1024 * 1024 * 1024, // 2 GB cap for a single carved video
         },
         new FileSignature
         {

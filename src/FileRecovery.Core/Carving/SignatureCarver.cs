@@ -250,7 +250,7 @@ public sealed class SignatureCarver
             else if (sig[0] == 0x50 && sig[1] == 0x4B && sig[2] == 0x05 && sig[3] == 0x06)
             {
                 byte[] eocd = _reader.ReadBytes(absoluteOffset + pos, 22);
-                uint commentLen = eocd.Length >= 22 ? ReadUInt16LE(eocd, 20) : 0;
+                uint commentLen = eocd.Length >= 22 ? (uint)ReadUInt16LE(eocd, 20) : 0u;
                 pos += 22 + commentLen;
                 return Math.Min(budget, pos);
             }
