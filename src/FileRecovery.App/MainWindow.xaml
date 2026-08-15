@@ -1,0 +1,445 @@
+<Window x:Class="FileRecovery.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:FileRecovery.App.ViewModels"
+        xmlns:conv="clr-namespace:FileRecovery.App.Converters"
+        xmlns:models="clr-namespace:FileRecovery.Core.Models;assembly=FileRecovery.Core"
+        Title="Advanced File Recovery" Height="820" Width="1280" MinHeight="640" MinWidth="1000"
+        Background="{StaticResource SurfaceBrush}"
+        FontFamily="Segoe UI">
+
+    <Window.Resources>
+        <conv:EnumEqualsToVisibilityConverter x:Key="StepVis"/>
+        <conv:BoolToVisibilityConverter x:Key="BoolVis"/>
+        <conv:InverseBoolToVisibilityConverter x:Key="InvBoolVis"/>
+        <conv:RecoverabilityToBrushConverter x:Key="RecovBrush"/>
+        <conv:RecoverabilityToTextConverter x:Key="RecovText"/>
+        <conv:ByteSizeConverter x:Key="ByteSize"/>
+        <conv:CategoryToGlyphConverter x:Key="CatGlyph"/>
+        <conv:NullToVisibilityConverter x:Key="NullVis"/>
+        <conv:InverseNullToVisibilityConverter x:Key="InvNullVis"/>
+
+        <Style x:Key="CardBorder" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource CardBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="10"/>
+            <Setter Property="Padding" Value="20"/>
+        </Style>
+        <Style x:Key="StepTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="22"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+            <Setter Property="Margin" Value="0,0,0,4"/>
+        </Style>
+        <Style x:Key="StepSubtitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+            <Setter Property="Margin" Value="0,0,0,20"/>
+        </Style>
+    </Window.Resources>
+
+    <DockPanel>
+        <!-- ===== Header ===== -->
+        <Border DockPanel.Dock="Top" Background="White" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+            <StackPanel Orientation="Horizontal" Margin="24,14" VerticalAlignment="Center">
+                <Border Background="{StaticResource BrandBrush}" CornerRadius="6" Width="32" Height="32">
+                    <TextBlock Text="⛑" FontSize="16" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <TextBlock Text="Advanced File Recovery" FontSize="17" FontWeight="SemiBold" Margin="12,0,0,0" VerticalAlignment="Center"
+                           Foreground="{StaticResource TextPrimaryBrush}"/>
+                <TextBlock Text="100% on-device — nothing is ever uploaded" FontSize="12" Margin="16,3,0,0" VerticalAlignment="Center"
+                           Foreground="{StaticResource TextSecondaryBrush}"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ===== Persistent destination warning (impossible to miss) ===== -->
+        <Border DockPanel.Dock="Top" Background="{StaticResource WarningBgBrush}" BorderBrush="#FDE1B8" BorderThickness="0,0,0,1" Padding="24,10">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="⚠" FontSize="16" Foreground="{StaticResource WarningBrush}" VerticalAlignment="Center"/>
+                <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource WarningBrush}" FontWeight="SemiBold" TextWrapping="Wrap">
+                    Do not save recovered files back to the drive you're recovering from — doing so can permanently overwrite the data you're trying to rescue.
+                </TextBlock>
+            </StackPanel>
+        </Border>
+
+        <!-- ===== Content ===== -->
+        <Grid Margin="24">
+
+            <!-- STEP 1: Select volume -->
+            <Grid Visibility="{Binding CurrentStep, Converter={StaticResource StepVis}, ConverterParameter=SelectVolume}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0">
+                    <TextBlock Text="Select a drive to scan" Style="{StaticResource StepTitle}"/>
+                    <TextBlock Text="Choose the partition, volume, or physical disk you want to recover files from. Removable USB and SD media are listed too."
+                               Style="{StaticResource StepSubtitle}"/>
+                </StackPanel>
+
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                    <ItemsControl ItemsSource="{Binding Volumes}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Style="{StaticResource CardBorder}" Width="360" Margin="0,0,16,16" Cursor="Hand">
+                                    <Border.InputBindings>
+                                        <MouseBinding MouseAction="LeftClick"
+                                                      Command="{Binding DataContext.SelectVolumeAndContinueCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                      CommandParameter="{Binding}"/>
+                                    </Border.InputBindings>
+                                    <StackPanel>
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="💾" FontSize="20" VerticalAlignment="Center"/>
+                                            <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="15" Margin="10,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                        <Grid Margin="0,14,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Text="File system" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
+                                                <TextBlock Text="{Binding FileSystem}" FontWeight="Medium"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1">
+                                                <TextBlock Text="Size" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
+                                                <TextBlock Text="{Binding TotalSizeBytes, Converter={StaticResource ByteSize}}" FontWeight="Medium"/>
+                                            </StackPanel>
+                                        </Grid>
+                                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0" Visibility="{Binding IsRemovable, Converter={StaticResource BoolVis}}">
+                                            <Border Background="#EEF2FF" CornerRadius="4" Padding="6,2">
+                                                <TextBlock Text="Removable media" FontSize="11" Foreground="{StaticResource BrandDarkBrush}"/>
+                                            </Border>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+
+                <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+                    <Button Content="Refresh drive list" Style="{StaticResource SecondaryButton}" Command="{Binding RefreshVolumesCommand}" Margin="0,0,10,0"/>
+                    <Button Content="Continue →" Style="{StaticResource PrimaryButton}" Command="{Binding GoToScanConfigCommand}"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- STEP 2: Configure scan -->
+            <Grid Visibility="{Binding CurrentStep, Converter={StaticResource StepVis}, ConverterParameter=ConfigureScan}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0">
+                    <TextBlock Text="Choose a scan type" Style="{StaticResource StepTitle}"/>
+                    <TextBlock Style="{StaticResource StepSubtitle}">
+                        <Run Text="Scanning:"/> <Run Text="{Binding SelectedVolume.DisplayName, Mode=OneWay}" FontWeight="SemiBold"/>
+                    </TextBlock>
+                </StackPanel>
+
+                <StackPanel Grid.Row="1">
+                    <Border Style="{StaticResource CardBorder}" Margin="0,0,0,14" Cursor="Hand">
+                        <Border.InputBindings>
+                            <MouseBinding MouseAction="LeftClick" Command="{Binding SetQuickScanCommand}"/>
+                        </Border.InputBindings>
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <RadioButton GroupName="ScanTypeGroup" IsChecked="{Binding IsQuickSelected, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                <TextBlock Text="Quick Scan" FontWeight="SemiBold" FontSize="15" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                <Border Background="#EEF2FF" CornerRadius="4" Padding="6,2" Margin="10,0,0,0">
+                                    <TextBlock Text="Fastest" FontSize="11" Foreground="{StaticResource BrandDarkBrush}"/>
+                                </Border>
+                            </StackPanel>
+                            <TextBlock Margin="26,6,0,0" TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}">
+                                Reads the file system's existing index (NTFS $MFT, FAT32/exFAT directory tables) to find recently deleted files. Best when a file system is still intact and you deleted or emptied the Recycle Bin recently.
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource CardBorder}" Cursor="Hand">
+                        <Border.InputBindings>
+                            <MouseBinding MouseAction="LeftClick" Command="{Binding SetDeepScanCommand}"/>
+                        </Border.InputBindings>
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <RadioButton GroupName="ScanTypeGroup" IsChecked="{Binding IsDeepSelected, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                <TextBlock Text="Deep Scan" FontWeight="SemiBold" FontSize="15" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                <Border Background="#FFF7ED" CornerRadius="4" Padding="6,2" Margin="10,0,0,0">
+                                    <TextBlock Text="Thorough — takes longer" FontSize="11" Foreground="{StaticResource WarningBrush}"/>
+                                </Border>
+                            </StackPanel>
+                            <TextBlock Margin="26,6,0,0" TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}">
+                                Sector-by-sector raw file carving by signature. Finds files even on formatted, corrupted, or RAW volumes where the file system index is gone — at the cost of longer scan times and generic recovered file names.
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Text="File types to look for" FontWeight="SemiBold" Margin="0,24,0,10"/>
+                    <ItemsControl ItemsSource="{Binding CategoryOptions}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <CheckBox Content="{Binding Category}" IsChecked="{Binding IsChecked}" Margin="0,0,20,8" FontSize="13"/>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
+                <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+                    <Button Content="← Back" Style="{StaticResource SecondaryButton}" Command="{Binding GoBackCommand}" Margin="0,0,10,0"/>
+                    <Button Content="Start scan" Style="{StaticResource PrimaryButton}" Command="{Binding StartScanCommand}"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- STEP 3: Scanning -->
+            <Grid Visibility="{Binding CurrentStep, Converter={StaticResource StepVis}, ConverterParameter=Scanning}">
+                <StackPanel VerticalAlignment="Center" MaxWidth="640" HorizontalAlignment="Center">
+                    <TextBlock Text="Scanning…" Style="{StaticResource StepTitle}" HorizontalAlignment="Center"/>
+                    <TextBlock Text="{Binding ScanStatusText}" Style="{StaticResource StepSubtitle}" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center"/>
+
+                    <ProgressBar Value="{Binding ScanPercent, Mode=OneWay}" Minimum="0" Maximum="100" Height="10" Margin="0,10,0,0"/>
+
+                    <Grid Margin="0,14,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding ScanPercent, StringFormat={}{0:0.#}%}" HorizontalAlignment="Left" Foreground="{StaticResource TextSecondaryBrush}"/>
+                        <TextBlock Grid.Column="1" HorizontalAlignment="Center" Foreground="{StaticResource TextSecondaryBrush}">
+                            <Run Text="{Binding ScanTotalFound, Mode=OneWay}" FontWeight="SemiBold"/> <Run Text="files found so far"/>
+                        </TextBlock>
+                        <TextBlock Grid.Column="2" Text="{Binding ScanEtaText}" HorizontalAlignment="Right" Foreground="{StaticResource TextSecondaryBrush}"/>
+                    </Grid>
+
+                    <ItemsControl ItemsSource="{Binding LiveCategoryCounts}" Margin="0,20,0,0" HorizontalAlignment="Center">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel HorizontalAlignment="Center"/></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="White" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="16" Padding="12,6" Margin="4">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{Binding Category, Converter={StaticResource CatGlyph}}" Margin="0,0,6,0"/>
+                                        <TextBlock Text="{Binding Category}" Foreground="{StaticResource TextSecondaryBrush}"/>
+                                        <TextBlock Text="{Binding Count}" FontWeight="SemiBold" Margin="6,0,0,0"/>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <Button Content="Cancel scan" Style="{StaticResource SecondaryButton}" Command="{Binding CancelScanCommand}" HorizontalAlignment="Center" Margin="0,24,0,0"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- STEP 4: Results -->
+            <Grid Visibility="{Binding CurrentStep, Converter={StaticResource StepVis}, ConverterParameter=Results}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0">
+                    <TextBlock Style="{StaticResource StepTitle}">
+                        <Run Text="Recoverable files"/> <Run Text="{Binding SelectedCount, Mode=OneWay, StringFormat=({0} selected)}" Foreground="{StaticResource TextSecondaryBrush}" FontSize="14"/>
+                    </TextBlock>
+                </StackPanel>
+
+                <Grid Grid.Row="1" Margin="0,0,0,14">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox Grid.Column="0" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                             Padding="10,8" BorderBrush="{StaticResource BorderBrush}" MaxWidth="380" HorizontalAlignment="Left"
+                             Tag="Search recovered files by name…"/>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                        <Button Content="Select all" Style="{StaticResource SecondaryButton}" Command="{Binding SelectAllInCategoryCommand}" CommandParameter="{x:Null}" Margin="0,0,8,0"/>
+                        <Button Content="Clear selection" Style="{StaticResource SecondaryButton}" Command="{Binding ClearSelectionCommand}"/>
+                    </StackPanel>
+                </Grid>
+
+                <Grid Grid.Row="2">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="320"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Border Style="{StaticResource CardBorder}" Grid.Column="0" Margin="0,0,14,0" Padding="0">
+                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="16,14,16,0">
+                                <RadioButton Content="All" GroupName="CatTabs" Margin="0,0,14,0" IsChecked="True"
+                                             Command="{Binding SelectCategoryTabCommand}" CommandParameter="{x:Null}"/>
+                                <RadioButton Content="Photos" GroupName="CatTabs" Margin="0,0,14,0"
+                                             Command="{Binding SelectCategoryTabCommand}" CommandParameter="{x:Static models:FileCategory.Photos}"/>
+                                <RadioButton Content="Documents" GroupName="CatTabs" Margin="0,0,14,0"
+                                             Command="{Binding SelectCategoryTabCommand}" CommandParameter="{x:Static models:FileCategory.Documents}"/>
+                                <RadioButton Content="Video" GroupName="CatTabs" Margin="0,0,14,0"
+                                             Command="{Binding SelectCategoryTabCommand}" CommandParameter="{x:Static models:FileCategory.Video}"/>
+                                <RadioButton Content="Audio" GroupName="CatTabs" Margin="0,0,14,0"
+                                             Command="{Binding SelectCategoryTabCommand}" CommandParameter="{x:Static models:FileCategory.Audio}"/>
+                                <RadioButton Content="Archives" GroupName="CatTabs" Margin="0,0,14,0"
+                                             Command="{Binding SelectCategoryTabCommand}" CommandParameter="{x:Static models:FileCategory.Archives}"/>
+                                <RadioButton Content="Other" GroupName="CatTabs"
+                                             Command="{Binding SelectCategoryTabCommand}" CommandParameter="{x:Static models:FileCategory.Other}"/>
+                            </StackPanel>
+                            <ListView DockPanel.Dock="Bottom" ItemsSource="{Binding FilteredResults}" SelectedItem="{Binding SelectedFile}"
+                                      BorderThickness="0" Margin="0,10,0,0">
+                                <ListView.View>
+                                    <GridView>
+                                        <GridViewColumn Width="34">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+                                        <GridViewColumn Header="Name" Width="260">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding Category, Converter={StaticResource CatGlyph}}" Margin="0,0,8,0"/>
+                                                        <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/>
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+                                        <GridViewColumn Header="Size" DisplayMemberBinding="{Binding SizeBytes, Converter={StaticResource ByteSize}}" Width="90"/>
+                                        <GridViewColumn Header="Condition" Width="160">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding Recoverability, Converter={StaticResource RecovText}}"
+                                                               Foreground="{Binding Recoverability, Converter={StaticResource RecovBrush}}" FontWeight="Medium"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+                                    </GridView>
+                                </ListView.View>
+                            </ListView>
+                        </DockPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource CardBorder}" Grid.Column="1">
+                        <StackPanel Visibility="{Binding SelectedFile, Converter={StaticResource NullVis}}">
+                            <Border Height="160" Background="#F1F3F6" CornerRadius="6" Margin="0,0,0,14">
+                                <Grid>
+                                    <TextBlock Text="{Binding SelectedFile.Category, Converter={StaticResource CatGlyph}}" FontSize="40"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                                               Visibility="{Binding SelectedFile.Thumbnail, Converter={StaticResource InvNullVis}}"/>
+                                    <Image Source="{Binding SelectedFile.Thumbnail}" Stretch="Uniform" Margin="6"/>
+                                </Grid>
+                            </Border>
+                            <TextBlock Text="{Binding SelectedFile.Name}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,10"/>
+
+                            <TextBlock Text="Size" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
+                            <TextBlock Text="{Binding SelectedFile.SizeBytes, Converter={StaticResource ByteSize}}" Margin="0,0,0,10"/>
+
+                            <TextBlock Text="Original path" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
+                            <TextBlock Text="{Binding SelectedFile.OriginalPath}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+
+                            <TextBlock Text="Condition" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
+                            <TextBlock Text="{Binding SelectedFile.Recoverability, Converter={StaticResource RecovText}}"
+                                       Foreground="{Binding SelectedFile.Recoverability, Converter={StaticResource RecovBrush}}" FontWeight="Medium" Margin="0,0,0,10"/>
+
+                            <TextBlock Text="Discovery method" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
+                            <TextBlock Text="{Binding SelectedFile.FromCarving, StringFormat={}{0}}" Margin="0,0,0,0"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+                    <Button Content="← Back" Style="{StaticResource SecondaryButton}" Command="{Binding GoBackCommand}" Margin="0,0,10,0"/>
+                    <Button Content="Recover selected files →" Style="{StaticResource PrimaryButton}" Command="{Binding GoToDestinationStepCommand}"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- STEP 5: Choose destination -->
+            <Grid Visibility="{Binding CurrentStep, Converter={StaticResource StepVis}, ConverterParameter=ChooseDestination}">
+                <StackPanel VerticalAlignment="Center" MaxWidth="640" HorizontalAlignment="Center">
+                    <TextBlock Text="Choose a recovery destination" Style="{StaticResource StepTitle}" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Pick a folder on a DIFFERENT physical drive than the one you scanned." Style="{StaticResource StepSubtitle}" HorizontalAlignment="Center"/>
+
+                    <Border Style="{StaticResource CardBorder}">
+                        <StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox Grid.Column="0" Text="{Binding DestinationFolder, Mode=OneWay}" IsReadOnly="True" Padding="10,8" BorderBrush="{StaticResource BorderBrush}"/>
+                                <Button Grid.Column="1" Content="Browse…" Style="{StaticResource SecondaryButton}" Command="{Binding BrowseDestinationCommand}" Margin="10,0,0,0"/>
+                            </Grid>
+
+                            <Border Background="#FEF2F2" BorderBrush="#FCA5A5" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,14,0,0"
+                                    Visibility="{Binding DestinationLooksUnsafe, Converter={StaticResource BoolVis}}">
+                                <TextBlock TextWrapping="Wrap" Foreground="{StaticResource DangerBrush}" FontWeight="SemiBold">
+                                    This folder is on the same physical drive you scanned. Choose a different drive to avoid overwriting recoverable data.
+                                </TextBlock>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+                        <Button Content="← Back" Style="{StaticResource SecondaryButton}" Command="{Binding GoBackCommand}" Margin="0,0,10,0"/>
+                        <Button Content="Start recovery" Style="{StaticResource PrimaryButton}" Command="{Binding StartRecoveryCommand}"
+                                IsEnabled="{Binding DestinationLooksUnsafe, Converter={StaticResource InvBoolVis}}"/>
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+
+            <!-- STEP 6: Recovering -->
+            <Grid Visibility="{Binding CurrentStep, Converter={StaticResource StepVis}, ConverterParameter=Recovering}">
+                <StackPanel VerticalAlignment="Center" MaxWidth="640" HorizontalAlignment="Center">
+                    <TextBlock Text="Recovering files…" Style="{StaticResource StepTitle}" HorizontalAlignment="Center"/>
+                    <TextBlock Text="{Binding RecoveryStatusText}" Style="{StaticResource StepSubtitle}" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center"/>
+                    <ProgressBar Value="{Binding RecoveryPercent, Mode=OneWay}" Minimum="0" Maximum="100" Height="10"/>
+                    <Button Content="Cancel" Style="{StaticResource SecondaryButton}" Command="{Binding CancelRecoveryCommand}" HorizontalAlignment="Center" Margin="0,20,0,0"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- STEP 7: Summary -->
+            <Grid Visibility="{Binding CurrentStep, Converter={StaticResource StepVis}, ConverterParameter=Summary}">
+                <StackPanel VerticalAlignment="Center" MaxWidth="560" HorizontalAlignment="Center">
+                    <TextBlock Text="Recovery complete" Style="{StaticResource StepTitle}" HorizontalAlignment="Center"/>
+                    <Border Style="{StaticResource CardBorder}">
+                        <StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="{Binding RecoveryResult.SucceededCount}" FontSize="28" FontWeight="Bold" Foreground="{StaticResource SuccessBrush}" HorizontalAlignment="Center"/>
+                                    <TextBlock Text="Recovered" HorizontalAlignment="Center" Foreground="{StaticResource TextSecondaryBrush}"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="{Binding RecoveryResult.FailedCount}" FontSize="28" FontWeight="Bold" Foreground="{StaticResource DangerBrush}" HorizontalAlignment="Center"/>
+                                    <TextBlock Text="Failed" HorizontalAlignment="Center" Foreground="{StaticResource TextSecondaryBrush}"/>
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock Text="{Binding RecoveryResult.DestinationFolder, StringFormat=Saved to: {0}}" Margin="0,16,0,0" TextWrapping="Wrap" HorizontalAlignment="Center"/>
+                        </StackPanel>
+                    </Border>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,16,0,0">
+                        <Button Content="Open destination folder" Style="{StaticResource SecondaryButton}" Command="{Binding OpenDestinationFolderCommand}" Margin="0,0,10,0"/>
+                        <Button Content="Start a new recovery" Style="{StaticResource PrimaryButton}" Command="{Binding StartOverCommand}"/>
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+
+        </Grid>
+    </DockPanel>
+</Window>

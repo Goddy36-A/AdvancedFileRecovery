@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <Platforms>x64</Platforms>
+    <RootNamespace>FileRecovery.App</RootNamespace>
+    <AssemblyName>AdvancedFileRecovery</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Add ApplicationIcon>Assets\app.ico</ApplicationIcon> once you drop a real .ico into Assets/ -->
+
+
+    <!-- Portable single-EXE publish settings (dotnet publish -c Release -r win-x64) -->
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <Version>1.0.0</Version>
+    <Product>Advanced File Recovery</Product>
+    <Company>Advanced File Recovery</Company>
+    <Copyright>Copyright (c) 2026</Copyright>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FileRecovery.Core\FileRecovery.Core.csproj" />
+  </ItemGroup>
+
+</Project>

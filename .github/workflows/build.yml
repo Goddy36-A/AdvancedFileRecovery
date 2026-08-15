@@ -1,0 +1,54 @@
+name: Build Advanced File Recovery
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore FileRecoveryPro.sln
+
+      - name: Build (Release)
+        run: dotnet build FileRecoveryPro.sln -c Release --no-restore
+
+      - name: Publish portable single-file EXE
+        run: >
+          dotnet publish src/FileRecovery.App/FileRecovery.App.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          -o publish
+
+      - name: Upload portable EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AdvancedFileRecovery-win-x64
+          path: |
+            publish/AdvancedFileRecovery.exe
+            publish/*.pdb
+          if-no-files-found: error
+
+      - name: Upload full publish folder (for debugging)
+        uses: actions/upload-artifact@v4
+        with:
+          name: AdvancedFileRecovery-publish-full
+          path: publish/
+          if-no-files-found: error
