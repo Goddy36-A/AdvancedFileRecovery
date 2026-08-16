@@ -12,6 +12,9 @@ public sealed class PreviewService
 {
     public byte[] ReadPreviewBytes(VolumeInfo source, RecoverableFile file, int maxBytes = 8 * 1024 * 1024)
     {
+        if (file.ResidentData != null)
+            return file.ResidentData; // already in memory — no device read needed
+
         using var reader = RawDiskReader.Open(source.DevicePath);
 
         if (file.FromCarving)

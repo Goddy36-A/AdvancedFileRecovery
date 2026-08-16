@@ -59,6 +59,11 @@ public sealed class RecoverableFile
     // For metadata-based recovery (NTFS/FAT/exFAT): the physical cluster runs holding the data.
     public List<ClusterRun> ClusterRuns { get; } = new();
 
+    // For NTFS files small enough to be stored resident (inline inside the MFT record
+    // itself rather than in file-data clusters). When set, this IS the file's data —
+    // there is no cluster location to re-read at recovery time.
+    public byte[]? ResidentData { get; init; }
+
     // For carved files: a single contiguous byte range on the raw device.
     public long CarveOffset { get; set; }
     public long CarveLength { get; set; }

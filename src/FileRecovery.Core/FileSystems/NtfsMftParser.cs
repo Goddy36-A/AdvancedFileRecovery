@@ -199,6 +199,7 @@ public sealed class NtfsMftParser
         DateTime? modified = null;
         long realSize = 0;
         var lcnRuns = new List<(long Lcn, long ClusterCount)>();
+        byte[]? residentData = null;
         bool hasDataAttr = false;
 
         int pos = attrOffset;
@@ -210,6 +211,7 @@ public sealed class NtfsMftParser
             if (attrLen == 0 || pos + attrLen > record.Length) break;
 
             byte nonResident = record[pos + 8];
+            byte attrNameLength = record[pos + 9]; // 0 for the primary unnamed $DATA stream
 
             if (attrType == 0x30 && fileName == null) // $FILE_NAME
             {
@@ -231,19 +233,23 @@ public sealed class NtfsMftParser
                     }
                 }
             }
-            else if (attrType == 0x80) // $DATA
+            else if (attrType == 0x80 && attrNameLength == 0) // $DATA, unnamed stream only (skip alternate data streams)
             {
                 hasDataAttr = true;
                 if (nonResident == 0)
                 {
-                    ushort valLen = BitConverter.ToUInt16(record, pos + 0x10);
+                    // Resident: the file's actual bytes are stored inline inside this MFT
+                    // record, not on any cluster. Copy them out now — this is the ONLY
+                    // moment they're addressable, since a deleted file's resident data
+                    // has no independent location to re-read at recovery time.
+                    ushort valLen = (ushort)Math.Min(ushort.MaxValue, BitConverter.ToUInt32(record, pos + 0x10)); // spec field is 4 bytes; resident data is always small in practice
                     ushort valOff = BitConverter.ToUInt16(record, pos + 0x14);
                     realSize = valLen;
-                    // Resident data lives inside the MFT record itself; capture its offset
-                    // so the recovery stage can copy straight from this record buffer.
-                    // We stash it via a synthetic single-run using a negative marker cluster
-                    // count-less path: for simplicity, resident streams are re-read from the
-                    // MFT record location at recovery time using ResidentDataOffset/Length below.
+                    if (valLen > 0 && pos + valOff + valLen <= record.Length)
+                    {
+                        residentData = new byte[valLen];
+                        Array.Copy(record, pos + valOff, residentData, 0, valLen);
+                    }
                 }
                 else
                 {
@@ -269,10 +275,22 @@ public sealed class NtfsMftParser
             Extension = ext,
             ModifiedUtc = modified,
             FromCarving = false,
+            ResidentData = residentData,
         };
-        foreach (var (lcn, count) in lcnRuns)
-            file.ClusterRuns.Add(new ClusterRun(lcn * _bytesPerCluster, count * _bytesPerCluster));
-        file.Recoverability = EstimateRecoverability(lcnRuns);
+
+        if (residentData != null)
+        {
+            // The bytes are embedded in this still-present MFT record, so as long as we
+            // could read the record at all, the data is fully intact — there is no
+            // "reallocated cluster" risk the way there is for non-resident streams.
+            file.Recoverability = Recoverability.Excellent;
+        }
+        else
+        {
+            foreach (var (lcn, count) in lcnRuns)
+                file.ClusterRuns.Add(new ClusterRun(lcn * _bytesPerCluster, count * _bytesPerCluster));
+            file.Recoverability = EstimateRecoverability(lcnRuns);
+        }
         return file;
     }
 

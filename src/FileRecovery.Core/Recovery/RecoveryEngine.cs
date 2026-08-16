@@ -88,7 +88,11 @@ public sealed class RecoveryEngine
 
                 using (var outStream = new FileStream(destPath, FileMode.Create, FileAccess.Write))
                 {
-                    if (file.FromCarving)
+                    if (file.ResidentData != null)
+                    {
+                        outStream.Write(file.ResidentData, 0, file.ResidentData.Length);
+                    }
+                    else if (file.FromCarving)
                     {
                         CopyRange(reader, outStream, file.CarveOffset, file.CarveLength);
                     }
