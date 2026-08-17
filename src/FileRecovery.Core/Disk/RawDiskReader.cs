@@ -12,7 +12,7 @@ namespace FileRecovery.Core.Disk;
 /// class in the solution allowed to touch the source path string. Every
 /// other component reads through this class.
 /// </summary>
-public sealed class RawDiskReader : IDisposable
+public sealed class RawDiskReader : IRawReader
 {
     private readonly SafeFileHandle _handle;
     private readonly object _sync = new();

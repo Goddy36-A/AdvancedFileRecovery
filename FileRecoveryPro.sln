@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FileRecovery.Core", "src\Fi
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FileRecovery.App", "src\FileRecovery.App\FileRecovery.App.csproj", "{22222222-2222-2222-2222-222222222222}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FileRecovery.Tests", "tests\FileRecovery.Tests\FileRecovery.Tests.csproj", "{33333333-3333-3333-3333-333333333333}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -21,6 +23,10 @@ Global
 		{22222222-2222-2222-2222-222222222222}.Debug|x64.Build.0 = Debug|x64
 		{22222222-2222-2222-2222-222222222222}.Release|x64.ActiveCfg = Release|x64
 		{22222222-2222-2222-2222-222222222222}.Release|x64.Build.0 = Release|x64
+		{33333333-3333-3333-3333-333333333333}.Debug|x64.ActiveCfg = Debug|x64
+		{33333333-3333-3333-3333-333333333333}.Debug|x64.Build.0 = Debug|x64
+		{33333333-3333-3333-3333-333333333333}.Release|x64.ActiveCfg = Release|x64
+		{33333333-3333-3333-3333-333333333333}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

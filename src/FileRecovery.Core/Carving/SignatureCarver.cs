@@ -16,9 +16,9 @@ public sealed class SignatureCarver
     private const int ChunkSize = 8 * 1024 * 1024;   // 8 MB read window
     private const int Overlap = 4096;                 // so signatures spanning chunk boundaries aren't missed
 
-    private readonly RawDiskReader _reader;
+    private readonly IRawReader _reader;
 
-    public SignatureCarver(RawDiskReader reader) => _reader = reader;
+    public SignatureCarver(IRawReader reader) => _reader = reader;
 
     public List<RecoverableFile> Carve(long startOffset, long endOffset, IProgress<ScanProgress>? progress,
         CancellationToken ct, HashSet<FileCategory>? categoryFilter = null)
@@ -52,25 +52,31 @@ public sealed class SignatureCarver
                 {
                     if (!MatchesAt(chunk, i, sig)) continue;
 
-                    long absoluteOffset = position + i;
+                    long absoluteOffset = position + i; // where the signature bytes matched
                     long carvedLength = DetermineLength(chunk, i, sig, absoluteOffset, endOffset);
                     if (carvedLength <= 0) continue;
+
+                    // For most formats the match position IS the true file start.
+                    // MP4 is the exception (see TrueStartBackOffset) — correct for
+                    // it here so CarveOffset/CarveLength always describe the same
+                    // byte range a recovery copy should read.
+                    long fileStartOffset = absoluteOffset - sig.TrueStartBackOffset;
 
                     var file = new RecoverableFile
                     {
                         Id = Guid.NewGuid().ToString("N"),
-                        Name = $"recovered_{absoluteOffset:X8}{sig.Extension}",
+                        Name = $"recovered_{fileStartOffset:X8}{sig.Extension}",
                         SizeBytes = carvedLength,
                         Category = sig.Category,
                         Extension = sig.Extension,
                         FromCarving = true,
-                        CarveOffset = absoluteOffset,
+                        CarveOffset = fileStartOffset,
                         CarveLength = carvedLength,
                         Recoverability = carvedLength >= sig.Header.Length ? Recoverability.Excellent : Recoverability.Partial,
                     };
                     found.Add(file);
                     counts[sig.Category]++;
-                    lastSkippedTo = absoluteOffset + carvedLength;
+                    lastSkippedTo = fileStartOffset + carvedLength;
                     break; // one match per offset is enough
                 }
             }

@@ -10,12 +10,18 @@ namespace FileRecovery.Core.Recovery;
 /// </summary>
 public sealed class PreviewService
 {
+    private readonly Func<string, IRawReader> _openReader;
+
+    public PreviewService() : this(path => RawDiskReader.Open(path)) { }
+
+    internal PreviewService(Func<string, IRawReader> readerFactory) => _openReader = readerFactory;
+
     public byte[] ReadPreviewBytes(VolumeInfo source, RecoverableFile file, int maxBytes = 8 * 1024 * 1024)
     {
         if (file.ResidentData != null)
             return file.ResidentData; // already in memory — no device read needed
 
-        using var reader = RawDiskReader.Open(source.DevicePath);
+        using var reader = _openReader(source.DevicePath);
 
         if (file.FromCarving)
         {

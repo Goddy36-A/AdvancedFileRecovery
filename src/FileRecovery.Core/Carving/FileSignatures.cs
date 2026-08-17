@@ -20,6 +20,15 @@ public sealed class FileSignature
     public SignatureMatchStrategy Strategy { get; init; } = SignatureMatchStrategy.HeaderFooter;
     public long MaxSizeBytes { get; init; } = 200 * 1024 * 1024; // safety cap per carved file
 
+    /// <summary>
+    /// How many bytes before the matched header bytes the file's TRUE start
+    /// actually is. Zero for every format except MP4/MOV: the carver matches
+    /// on the "ftyp" text, but that text sits 4 bytes into the ISO-BMFF box
+    /// (which starts with a 4-byte size field) — so the true file start is
+    /// 4 bytes earlier than the match position.
+    /// </summary>
+    public int TrueStartBackOffset { get; init; } = 0;
+
     public static byte[] B(params int[] bytes) => bytes.Select(b => (byte)b).ToArray();
 }
 
@@ -75,6 +84,7 @@ public static class FileSignatureCatalog
             Header = FileSignature.B(0x66, 0x74, 0x79, 0x70), // "ftyp" (checked at offset 4 by carver)
             Strategy = SignatureMatchStrategy.StructureAware, // sum ISO-BMFF box sizes
             MaxSizeBytes = 2L * 1024 * 1024 * 1024, // 2 GB cap for a single carved video
+            TrueStartBackOffset = 4, // match position is "ftyp", 4 bytes into the box (size field comes first)
         },
         new FileSignature
         {

@@ -7,14 +7,26 @@ namespace FileRecovery.Core.Recovery;
 
 public sealed class RecoveryEngine
 {
+    private readonly Func<string, IRawReader> _openReader;
+
+    public RecoveryEngine() : this(path => RawDiskReader.Open(path)) { }
+
+    /// <summary>
+    /// Test-only seam: lets a test substitute a synthetic in-memory disk image
+    /// for a real Win32 device handle, so scan/recovery orchestration can be
+    /// verified without a Windows machine, admin rights, or a real disk.
+    /// Production code always uses the public parameterless constructor.
+    /// </summary>
+    internal RecoveryEngine(Func<string, IRawReader> readerFactory) => _openReader = readerFactory;
+
     /// <summary>
     /// Runs a scan (Quick or Deep) against the given volume/drive and returns
-    /// everything discovered. The RawDiskReader opened here is strictly
-    /// read-only for the lifetime of the scan.
+    /// everything discovered. The reader opened here is strictly read-only
+    /// for the lifetime of the scan.
     /// </summary>
     public List<RecoverableFile> Scan(ScanOptions options, IProgress<ScanProgress>? progress, CancellationToken ct)
     {
-        using var reader = RawDiskReader.Open(options.Volume.DevicePath);
+        using var reader = _openReader(options.Volume.DevicePath);
 
         if (options.Type == ScanType.Quick)
         {
@@ -74,7 +86,7 @@ public sealed class RecoveryEngine
         int succeeded = 0;
         var failures = new List<(RecoverableFile, string)>();
 
-        using var reader = RawDiskReader.Open(source.DevicePath);
+        using var reader = _openReader(source.DevicePath);
 
         for (int i = 0; i < list.Count; i++)
         {
@@ -137,7 +149,7 @@ public sealed class RecoveryEngine
         };
     }
 
-    private static void CopyRange(RawDiskReader reader, FileStream outStream, long offset, long length)
+    private static void CopyRange(IRawReader reader, FileStream outStream, long offset, long length)
     {
         const int bufSize = 4 * 1024 * 1024;
         long remaining = length;

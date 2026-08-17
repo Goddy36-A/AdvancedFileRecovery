@@ -26,6 +26,17 @@ jobs:
       - name: Build (Release)
         run: dotnet build FileRecoveryPro.sln -c Release --no-restore
 
+      - name: Run tests
+        run: dotnet test FileRecoveryPro.sln -c Release --no-build --logger "trx;LogFileName=test-results.trx" --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults/
+          if-no-files-found: warn
+
       - name: Publish portable single-file EXE
         run: >
           dotnet publish src/FileRecovery.App/FileRecovery.App.csproj

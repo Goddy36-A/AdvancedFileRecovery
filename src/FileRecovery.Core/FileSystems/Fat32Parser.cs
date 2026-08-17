@@ -14,7 +14,7 @@ namespace FileRecovery.Core.FileSystems;
 /// </summary>
 public sealed class Fat32Parser
 {
-    private readonly RawDiskReader _reader;
+    private readonly IRawReader _reader;
     private int _bytesPerSector;
     private int _sectorsPerCluster;
     private int _reservedSectors;
@@ -28,7 +28,7 @@ public sealed class Fat32Parser
 
     public int BytesPerCluster => _bytesPerCluster;
 
-    public Fat32Parser(RawDiskReader reader) => _reader = reader;
+    public Fat32Parser(IRawReader reader) => _reader = reader;
 
     public bool TryReadBootSector()
     {

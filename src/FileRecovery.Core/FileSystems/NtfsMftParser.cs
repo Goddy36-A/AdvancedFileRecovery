@@ -15,7 +15,7 @@ public sealed class NtfsMftParser
 {
     private const uint FileRecordMagic = 0x454C4946; // "FILE" little-endian read as uint
 
-    private readonly RawDiskReader _reader;
+    private readonly IRawReader _reader;
     private int _bytesPerSector;
     private int _bytesPerCluster;
     private long _mftOffset;
@@ -26,7 +26,7 @@ public sealed class NtfsMftParser
 
     public int BytesPerCluster => _bytesPerCluster;
 
-    public NtfsMftParser(RawDiskReader reader) => _reader = reader;
+    public NtfsMftParser(IRawReader reader) => _reader = reader;
 
     public bool TryReadBootSector(out FileSystemKind detected)
     {
@@ -220,7 +220,10 @@ public sealed class NtfsMftParser
                 if (vp + 0x42 <= record.Length)
                 {
                     parentRef = BitConverter.ToInt64(record, vp) & 0x0000FFFFFFFFFFFF;
-                    long mtimeRaw = BitConverter.ToInt64(record, vp + 0x18);
+                    // $FILE_NAME value layout: 0x00 parent ref, 0x08 creation time,
+                    // 0x10 content modification time, 0x18 MFT/metadata modification time.
+                    // We want the former (what a user thinks of as "last modified").
+                    long mtimeRaw = BitConverter.ToInt64(record, vp + 0x10);
                     try { modified = DateTime.FromFileTimeUtc(mtimeRaw); } catch { modified = null; }
                     byte nameLen = record[vp + 0x40];
                     byte nameSpace = record[vp + 0x41];

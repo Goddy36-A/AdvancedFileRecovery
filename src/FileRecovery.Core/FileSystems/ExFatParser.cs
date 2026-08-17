@@ -15,7 +15,7 @@ namespace FileRecovery.Core.FileSystems;
 /// </summary>
 public sealed class ExFatParser
 {
-    private readonly RawDiskReader _reader;
+    private readonly IRawReader _reader;
     private int _bytesPerSectorShift;
     private int _sectorsPerClusterShift;
     private long _fatOffsetSectors;
@@ -27,7 +27,7 @@ public sealed class ExFatParser
 
     public int BytesPerCluster => _bytesPerCluster;
 
-    public ExFatParser(RawDiskReader reader) => _reader = reader;
+    public ExFatParser(IRawReader reader) => _reader = reader;
 
     public bool TryReadBootSector()
     {
