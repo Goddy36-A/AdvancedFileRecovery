@@ -22,7 +22,7 @@ public sealed class NtfsMftParser
     private int _fileRecordSize;
     private long _totalClusters;
 
-    private readonly List<(long Lcn, long ClusterCount)> _bitmapRuns = new(); // where $Bitmap's own bytes live on disk
+    private List<(long Lcn, long ClusterCount)> _bitmapRuns = new(); // where $Bitmap's own bytes live on disk
     private bool _bitmapLoaded;
     private readonly Dictionary<long, byte[]> _bitmapBlockCache = new();
     private const int BitmapCacheBlockSize = 4096; // one cached read covers 4096*8 = 32,768 clusters' worth of allocation bits
