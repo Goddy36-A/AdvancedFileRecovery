@@ -33,6 +33,29 @@ jobs:
       - name: Run tests
         run: dotnet test FileRecoveryPro.sln -c Release --no-build --logger "trx;LogFileName=test-results.trx" --results-directory TestResults
 
+      - name: Print failing test details as annotations
+        if: always()
+        shell: pwsh
+        run: |
+          $trx = Get-ChildItem -Path TestResults -Filter *.trx -Recurse | Select-Object -First 1
+          if ($trx) {
+            [xml]$xml = Get-Content $trx.FullName
+            $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
+            $ns.AddNamespace("t", "http://microsoft.com/schemas/VisualStudio/TeamTest/2010")
+            $failed = $xml.SelectNodes("//t:UnitTestResult[@outcome='Failed']", $ns)
+            Write-Host "Failed test count: $($failed.Count)"
+            foreach ($f in $failed) {
+              $testName = $f.testName
+              $msgNode = $f.SelectSingleNode("t:Output/t:ErrorInfo/t:Message", $ns)
+              $stackNode = $f.SelectSingleNode("t:Output/t:ErrorInfo/t:StackTrace", $ns)
+              $msg = if ($msgNode) { $msgNode.InnerText -replace "`r`n","  " -replace "`n","  " } else { "failed" }
+              $stack = if ($stackNode) { $stackNode.InnerText -replace "`r`n","  " -replace "`n","  " } else { "" }
+              Write-Host "::error::TEST FAILED: $testName -- $msg -- $stack"
+            }
+          } else {
+            Write-Host "No trx file found."
+          }
+
       - name: Report test results
         if: always()
         uses: dorny/test-reporter@v1
