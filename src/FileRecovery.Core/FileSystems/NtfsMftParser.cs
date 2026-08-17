@@ -22,7 +22,10 @@ public sealed class NtfsMftParser
     private int _fileRecordSize;
     private long _totalClusters;
 
-    private readonly HashSet<long> _allocatedClusters = new(); // from $Bitmap, used for recoverability scoring
+    private readonly List<(long Lcn, long ClusterCount)> _bitmapRuns = new(); // where $Bitmap's own bytes live on disk
+    private bool _bitmapLoaded;
+    private readonly Dictionary<long, byte[]> _bitmapBlockCache = new();
+    private const int BitmapCacheBlockSize = 4096; // one cached read covers 4096*8 = 32,768 clusters' worth of allocation bits
 
     public int BytesPerCluster => _bytesPerCluster;
 
@@ -61,7 +64,7 @@ public sealed class NtfsMftParser
         var results = new List<RecoverableFile>();
         var counts = Enum.GetValues<FileCategory>().ToDictionary(c => c, _ => 0);
 
-        LoadBitmapBestEffort();
+        LoadBitmapRunsBestEffort();
 
         // The $MFT's own size isn't known up front without parsing its own DATA runs;
         // as a robust approximation we scan up to `_totalClusters` worth of possible
@@ -146,31 +149,73 @@ public sealed class NtfsMftParser
         return Math.Min(cap, 4L * 1024 * 1024 * 1024); // never guess more than 4GB of MFT
     }
 
-    /// <summary>Reads $Bitmap (record 6) so we can flag whether a deleted file's clusters were reused.</summary>
-    private void LoadBitmapBestEffort()
+    /// <summary>Locates $Bitmap's (record 6) own data runs — where its bytes live on disk — without reading the bitmap content itself yet.</summary>
+    private void LoadBitmapRunsBestEffort()
     {
         try
         {
             byte[] record6 = _reader.ReadBytes(_mftOffset + 6L * _fileRecordSize, _fileRecordSize);
             if (BitConverter.ToUInt32(record6, 0) != FileRecordMagic) return;
             ApplyFixup(record6);
-            var runs = ExtractDataRuns(record6, out _);
-
-            long clusterIndex = 0;
-            foreach (var run in runs)
-            {
-                for (long c = 0; c < run.ClusterCount; c++)
-                {
-                    // Reading the whole bitmap bit-by-bit for large volumes is expensive;
-                    // we lazily sample per-run start clusters to keep Quick Scan fast and
-                    // treat the run's clusters as "allocated" for scoring heuristics.
-                    _allocatedClusters.Add(run.Lcn + c);
-                }
-                clusterIndex += run.ClusterCount;
-                if (clusterIndex > 2_000_000) break; // cap bookkeeping cost on huge volumes
-            }
+            _bitmapRuns = ExtractDataRuns(record6, out _);
+            _bitmapLoaded = _bitmapRuns.Count > 0;
         }
         catch { /* best effort only; recoverability falls back to Unknown */ }
+    }
+
+    /// <summary>
+    /// Tests whether a single cluster (LCN) is currently marked allocated in
+    /// $Bitmap. Returns null if $Bitmap wasn't readable or the cluster falls
+    /// outside its mapped range.
+    ///
+    /// This reads only the handful of bytes needed for THIS cluster's bit —
+    /// not the whole bitmap — so recoverability scoring scales to any volume
+    /// size instead of the previous approach of materializing a per-cluster
+    /// set for the entire disk up front (which was also, independently,
+    /// checking the wrong thing: it recorded where $Bitmap's own bytes are
+    /// STORED on disk, never the allocation bits those bytes actually encode).
+    /// A small cache of recently-read 4KB blocks means a file's own
+    /// (typically contiguous) cluster run almost always hits one cached
+    /// read, not one disk read per cluster.
+    /// </summary>
+    private bool? IsClusterAllocated(long cluster)
+    {
+        if (!_bitmapLoaded || cluster < 0) return null;
+
+        long byteIndex = cluster / 8;
+        int bitIndex = (int)(cluster % 8);
+
+        long runStartByte = 0;
+        foreach (var run in _bitmapRuns)
+        {
+            long runByteLength = run.ClusterCount * _bytesPerCluster;
+            if (byteIndex >= runStartByte && byteIndex < runStartByte + runByteLength)
+            {
+                long offsetWithinRun = byteIndex - runStartByte;
+                long diskOffset = run.Lcn * _bytesPerCluster + offsetWithinRun;
+                byte b = ReadBitmapByteCached(diskOffset);
+                return (b & (1 << bitIndex)) != 0;
+            }
+            runStartByte += runByteLength;
+        }
+        return null; // cluster number falls outside what $Bitmap's runs map to
+    }
+
+    private byte ReadBitmapByteCached(long diskOffset)
+    {
+        long blockKey = diskOffset / BitmapCacheBlockSize;
+        if (!_bitmapBlockCache.TryGetValue(blockKey, out var block))
+        {
+            // Crude but effective cap: a scan touching wildly scattered clusters
+            // (heavily fragmented files) could otherwise grow this unboundedly
+            // over a long Quick Scan. Clearing and starting fresh is simpler
+            // than real LRU and costs at most one extra re-read per block.
+            if (_bitmapBlockCache.Count > 512) _bitmapBlockCache.Clear();
+            block = _reader.ReadBytes(blockKey * BitmapCacheBlockSize, BitmapCacheBlockSize);
+            _bitmapBlockCache[blockKey] = block;
+        }
+        int offsetInBlock = (int)(diskOffset % BitmapCacheBlockSize);
+        return block[offsetInBlock];
     }
 
     /// <summary>Undoes the NTFS "update sequence array" fixup so the last 2 bytes of each sector are correct.</summary>
@@ -300,15 +345,17 @@ public sealed class NtfsMftParser
     private Recoverability EstimateRecoverability(List<(long Lcn, long ClusterCount)> runs)
     {
         if (runs.Count == 0) return Recoverability.Unknown;
-        if (_allocatedClusters.Count == 0) return Recoverability.Unknown;
+        if (!_bitmapLoaded) return Recoverability.Unknown;
 
         long total = 0, reallocated = 0;
         foreach (var run in runs)
         {
             for (long c = run.Lcn; c < run.Lcn + run.ClusterCount; c++)
             {
+                bool? allocated = IsClusterAllocated(c);
+                if (allocated == null) continue; // outside what $Bitmap maps — don't let it skew the ratio
                 total++;
-                if (_allocatedClusters.Contains(c)) reallocated++;
+                if (allocated.Value) reallocated++;
             }
         }
         if (total == 0) return Recoverability.Unknown;
