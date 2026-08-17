@@ -76,7 +76,7 @@ public class SignatureCarverTests
 
         var found = carver.Carve(0, bytes.Length, progress: null, CancellationToken.None);
 
-        var foundJpeg = Assert.Single(found, f => f.Category == FileCategory.Photos);
+        var foundJpeg = Assert.Single(found, f => f.Extension == ".jpg");
         Assert.Equal(jpegOffset, foundJpeg.CarveOffset);
         Assert.Equal(jpeg.Length, foundJpeg.CarveLength);
 

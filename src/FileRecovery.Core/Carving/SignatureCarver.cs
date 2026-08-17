@@ -139,7 +139,12 @@ public sealed class SignatureCarver
     /// </summary>
     private long DetermineLength(byte[] firstChunk, int indexInChunk, FileSignature sig, long absoluteOffset, long hardEnd)
     {
-        long budget = Math.Min(sig.MaxSizeBytes, hardEnd - absoluteOffset);
+        // Budget must be measured from the file's TRUE start, not the signature
+        // match position — for MP4 those differ by TrueStartBackOffset bytes
+        // ("ftyp" sits 4 bytes into the box). Using hardEnd-absoluteOffset alone
+        // would under-count the available room by exactly that many bytes and
+        // silently truncate the carve.
+        long budget = Math.Min(sig.MaxSizeBytes, hardEnd - absoluteOffset + sig.TrueStartBackOffset);
 
         switch (sig.Name)
         {
