@@ -64,4 +64,27 @@ public class ExFatParserTests
         var file = Assert.Single(found);
         Assert.Equal(longName, file.Name);
     }
+
+    [Fact]
+    public void ScanDeletedEntries_RealZipBytesAtAssumedLocation_ScoresExcellent()
+    {
+        byte[] zip = new byte[64];
+        new byte[] { 0x50, 0x4B, 0x03, 0x04 }.CopyTo(zip, 0);       // local file header sig
+        new byte[] { 0x50, 0x4B, 0x05, 0x06 }.CopyTo(zip, 40);      // EOCD sig somewhere near the end
+
+        var entries = new List<DirEntrySet> { DeletedEntry("archive.zip", size: (ulong)zip.Length, firstCluster: 20) };
+        byte[] volume = BuildVolume(ClusterCount, entries);
+
+        long dataOffset = ((long)ClusterHeapOffsetSectors + (20 - 2) * (1 << SectorsPerClusterShift)) * BytesPerSector;
+        Array.Copy(zip, 0, volume, dataOffset, zip.Length);
+
+        using var reader = new MemoryRawReader(volume);
+        var parser = new ExFatParser(reader);
+        Assert.True(parser.TryReadBootSector());
+
+        var found = parser.ScanDeletedEntries(null, CancellationToken.None, null);
+
+        var zipFile = Assert.Single(found);
+        Assert.Equal(Recoverability.Excellent, zipFile.Recoverability);
+    }
 }

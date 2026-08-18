@@ -165,7 +165,7 @@ public sealed class ExFatParser
                     Category = category,
                     Extension = ext,
                     FromCarving = false,
-                    Recoverability = firstCluster >= 2 ? Recoverability.Partial : Recoverability.Poor,
+                    Recoverability = EstimateRecoverability(runs, ext, (long)dataLength, firstCluster >= 2),
                 };
                 file.ClusterRuns.AddRange(runs);
                 results.Add(file);
@@ -182,5 +182,54 @@ public sealed class ExFatParser
 
         foreach (var sub in subDirs)
             WalkDirectory(sub, results, counts, visited, categoryFilter, ct, report);
+    }
+
+    /// <summary>
+    /// exFAT is commonly (though not always) allocated contiguously, but this
+    /// cluster location is still an assumption, not a confirmed chain. This
+    /// peeks at the actual bytes there and checks whether they look like an
+    /// intact file of the claimed type instead of reporting a blind
+    /// "cluster number is in range" guess. Falls back to that bounds-based
+    /// heuristic for extensions with no structural validator, or if the
+    /// validation read itself fails for any reason.
+    /// </summary>
+    private const int ValidationWindowBytes = 65536;
+
+    private Recoverability EstimateRecoverability(List<ClusterRun> runs, string extension, long sizeBytes, bool clusterInBounds)
+    {
+        Recoverability fallback = clusterInBounds ? Recoverability.Partial : Recoverability.Poor;
+        if (runs.Count == 0 || sizeBytes <= 0) return fallback;
+
+        try
+        {
+            long byteOffset = runs[0].ByteOffset;
+            int headLen = (int)Math.Min(sizeBytes, ValidationWindowBytes);
+            byte[] head = _reader.ReadBytes(byteOffset, headLen);
+
+            byte[] tail;
+            if (sizeBytes > headLen)
+            {
+                int tailLen = (int)Math.Min(sizeBytes, ValidationWindowBytes);
+                long tailOffset = byteOffset + sizeBytes - tailLen;
+                tail = _reader.ReadBytes(tailOffset, tailLen);
+            }
+            else
+            {
+                tail = head;
+            }
+
+            var result = RecoveredFileValidator.Validate(head, tail, extension, sizeBytes);
+            return result switch
+            {
+                StructuralValidation.Valid => Recoverability.Excellent,
+                StructuralValidation.HeaderOnlyValid => Recoverability.Partial,
+                StructuralValidation.Invalid => Recoverability.Poor,
+                _ => fallback,
+            };
+        }
+        catch (IOException)
+        {
+            return fallback;
+        }
     }
 }

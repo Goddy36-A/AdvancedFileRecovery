@@ -102,4 +102,61 @@ public class Fat32ParserTests
         var file = Assert.Single(found);
         Assert.Equal("real_file.zip", file.Name);
     }
+
+    [Fact]
+    public void ScanDeletedEntries_RealJpegBytesAtAssumedLocation_ScoresExcellent()
+    {
+        byte[] jpeg = { 0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, (byte)'J', (byte)'F', (byte)'I', (byte)'F', 0x00, 0xFF, 0xD9 };
+        var entries = new List<DirEntryBlock> { DeletedLongNameEntry("photo.jpg", size: (uint)jpeg.Length, startCluster: 10) };
+        byte[] volume = BuildVolume(TotalClusters, entries);
+
+        long dataAreaOffset = (ReservedSectors + (long)NumFats * SectorsPerFat) * BytesPerSector;
+        long dataOffset = dataAreaOffset + (10 - 2) * BytesPerCluster;
+        Array.Copy(jpeg, 0, volume, dataOffset, jpeg.Length);
+
+        using var reader = new MemoryRawReader(volume);
+        var parser = new Fat32Parser(reader);
+        Assert.True(parser.TryReadBootSector());
+
+        var found = parser.ScanDeletedEntries(null, CancellationToken.None, null);
+
+        var file2 = Assert.Single(found);
+        Assert.Equal(Recoverability.Excellent, file2.Recoverability);
+    }
+
+    [Fact]
+    public void ScanDeletedEntries_GarbageAtAssumedLocation_ScoresPoorInsteadOfOptimisticPartial()
+    {
+        // No real file bytes written at the assumed cluster — the region is
+        // zero-filled, which should fail the JPEG header check outright.
+        var entries = new List<DirEntryBlock> { DeletedLongNameEntry("photo.jpg", size: 5000, startCluster: 10) };
+        byte[] volume = BuildVolume(TotalClusters, entries);
+
+        using var reader = new MemoryRawReader(volume);
+        var parser = new Fat32Parser(reader);
+        Assert.True(parser.TryReadBootSector());
+
+        var found = parser.ScanDeletedEntries(null, CancellationToken.None, null);
+
+        var file3 = Assert.Single(found);
+        Assert.Equal(Recoverability.Poor, file3.Recoverability);
+    }
+
+    [Fact]
+    public void ScanDeletedEntries_UnvalidatableExtension_FallsBackToBoundsHeuristic()
+    {
+        // .txt has no structural validator — should keep the old bounds-based
+        // Partial estimate rather than being downgraded for lack of evidence.
+        var entries = new List<DirEntryBlock> { DeletedLongNameEntry("notes.txt", size: 100, startCluster: 10) };
+        byte[] volume = BuildVolume(TotalClusters, entries);
+
+        using var reader = new MemoryRawReader(volume);
+        var parser = new Fat32Parser(reader);
+        Assert.True(parser.TryReadBootSector());
+
+        var found = parser.ScanDeletedEntries(null, CancellationToken.None, null);
+
+        var file4 = Assert.Single(found);
+        Assert.Equal(Recoverability.Partial, file4.Recoverability);
+    }
 }

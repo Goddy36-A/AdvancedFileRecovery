@@ -159,6 +159,7 @@ public sealed class Fat32Parser
                 if (categoryFilter != null && !categoryFilter.Contains(category)) continue;
 
                 var runs = BuildAssumedContiguousRun(startClus, size);
+                bool clusterInBounds = startClus >= 2 && startClus < _totalClusters + 2;
                 var file = new RecoverableFile
                 {
                     Id = Guid.NewGuid().ToString("N"),
@@ -168,9 +169,7 @@ public sealed class Fat32Parser
                     Extension = ext,
                     ModifiedUtc = modified,
                     FromCarving = false,
-                    Recoverability = startClus >= 2 && startClus < _totalClusters + 2
-                        ? Recoverability.Partial   // FAT undelete can't confirm the chain wasn't reused; flagged Partial by default
-                        : Recoverability.Poor,
+                    Recoverability = EstimateRecoverability(runs, ext, size, clusterInBounds),
                 };
                 file.ClusterRuns.AddRange(runs);
                 results.Add(file);
@@ -203,6 +202,54 @@ public sealed class Fat32Parser
         long lengthBytes = clusterCount * _bytesPerCluster;
         runs.Add(new ClusterRun(byteOffset, lengthBytes));
         return runs;
+    }
+
+    /// <summary>
+    /// Since the cluster location is only ASSUMED (see BuildAssumedContiguousRun),
+    /// this peeks at the actual bytes there and checks whether they look like an
+    /// intact file of the claimed type — an evidence-based estimate instead of a
+    /// blind "clusters are in range" guess. Falls back to the bounds-based
+    /// heuristic for extensions with no structural validator (e.g. plain text)
+    /// or if the validation read itself fails for any reason.
+    /// </summary>
+    private const int ValidationWindowBytes = 65536;
+
+    private Recoverability EstimateRecoverability(List<ClusterRun> runs, string extension, uint sizeBytes, bool clusterInBounds)
+    {
+        Recoverability fallback = clusterInBounds ? Recoverability.Partial : Recoverability.Poor;
+        if (runs.Count == 0 || sizeBytes == 0) return fallback;
+
+        try
+        {
+            long byteOffset = runs[0].ByteOffset;
+            int headLen = (int)Math.Min((long)sizeBytes, ValidationWindowBytes);
+            byte[] head = _reader.ReadBytes(byteOffset, headLen);
+
+            byte[] tail;
+            if ((long)sizeBytes > headLen)
+            {
+                int tailLen = (int)Math.Min((long)sizeBytes, ValidationWindowBytes);
+                long tailOffset = byteOffset + sizeBytes - tailLen;
+                tail = _reader.ReadBytes(tailOffset, tailLen);
+            }
+            else
+            {
+                tail = head; // whole (small) file is already in `head`
+            }
+
+            var result = RecoveredFileValidator.Validate(head, tail, extension, sizeBytes);
+            return result switch
+            {
+                StructuralValidation.Valid => Recoverability.Excellent,
+                StructuralValidation.HeaderOnlyValid => Recoverability.Partial,
+                StructuralValidation.Invalid => Recoverability.Poor,
+                _ => fallback, // NotApplicable — no validator for this extension
+            };
+        }
+        catch (IOException)
+        {
+            return fallback; // best-effort only; a validation read failure must never break the scan
+        }
     }
 
     /// <summary>Follows a live FAT chain (for intact directories); if the chain looks broken, falls back to reading forward linearly and relying on the 0x00 end-of-entries marker to bound each directory.</summary>
