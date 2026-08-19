@@ -27,6 +27,13 @@ public sealed class NtfsMftParser
     private readonly Dictionary<long, byte[]> _bitmapBlockCache = new();
     private const int BitmapCacheBlockSize = 4096; // one cached read covers 4096*8 = 32,768 clusters' worth of allocation bits
 
+    // Original-path reconstruction: cache of MFT record number -> (own name, own parent ref),
+    // populated lazily as parent chains are walked. Many recovered files share ancestors
+    // (same folder), so this avoids re-reading the same directory record repeatedly.
+    private readonly Dictionary<long, (string Name, long ParentRef)?> _pathNameCache = new();
+    private const int MaxPathDepth = 64;
+    private const long RootDirectoryRecordNumber = 5; // fixed by the NTFS spec
+
     public int BytesPerCluster => _bytesPerCluster;
 
     public NtfsMftParser(IRawReader reader) => _reader = reader;
@@ -317,7 +324,7 @@ public sealed class NtfsMftParser
         {
             Id = Guid.NewGuid().ToString("N"),
             Name = fileName,
-            OriginalPath = null, // full path reconstruction requires walking parent refs; left as filename-only for entries whose parent is also gone
+            OriginalPath = TryResolvePath(parentRef, fileName),
             SizeBytes = realSize,
             Category = FileSignatureCatalog.CategoryForExtension(ext),
             Extension = ext,
@@ -340,6 +347,112 @@ public sealed class NtfsMftParser
             file.Recoverability = EstimateRecoverability(lcnRuns);
         }
         return file;
+    }
+
+    /// <summary>
+    /// Walks parent MFT references upward from a file's immediate parent to
+    /// the volume root, resolving each ancestor's own name along the way, to
+    /// reconstruct the original full path a deleted file lived at. Deleted
+    /// files very commonly still have an intact, in-use parent directory —
+    /// the user deleted the FILE, not the folder it was in — so this is
+    /// usually resolvable even though the file's own record is gone from the
+    /// live tree. Returns null (falling back to filename-only display) if any
+    /// ancestor is unreadable, a cycle is detected, or the walk exceeds a
+    /// sane depth — never throws.
+    /// </summary>
+    private string? TryResolvePath(long parentRef, string fileName)
+    {
+        if (parentRef < 0) return null;
+
+        var segments = new List<string>();
+        var visited = new HashSet<long>();
+        long current = parentRef;
+
+        for (int depth = 0; depth < MaxPathDepth; depth++)
+        {
+            if (current == RootDirectoryRecordNumber)
+            {
+                segments.Reverse();
+                string prefix = segments.Count > 0 ? string.Join('\\', segments) + "\\" : "";
+                return "\\" + prefix + fileName;
+            }
+            if (!visited.Add(current)) return null; // cycle in a corrupted parent chain
+
+            var resolved = TryGetRecordNameAndParent(current);
+            if (resolved == null) return null;
+
+            segments.Add(resolved.Value.Name);
+            current = resolved.Value.ParentRef;
+        }
+        return null; // exceeded max depth without reaching the root — give up rather than guess
+    }
+
+    private (string Name, long ParentRef)? TryGetRecordNameAndParent(long recordNumber)
+    {
+        if (_pathNameCache.TryGetValue(recordNumber, out var cached)) return cached;
+
+        (string Name, long ParentRef)? result = null;
+        try
+        {
+            byte[] record = _reader.ReadBytes(_mftOffset + recordNumber * _fileRecordSize, _fileRecordSize);
+            if (BitConverter.ToUInt32(record, 0) == FileRecordMagic)
+            {
+                ApplyFixup(record);
+                if (TryParseFileNameOnly(record, out string? name, out long parentRef) && name != null)
+                    result = (name, parentRef);
+            }
+        }
+        catch (IOException) { /* leave result null — best effort */ }
+
+        _pathNameCache[recordNumber] = result;
+        return result;
+    }
+
+    /// <summary>
+    /// Extracts just the $FILE_NAME attribute's name and parent reference from
+    /// a record — used for ancestor lookups during path resolution, where we
+    /// only need identity, not the full file metadata ParseAttributes builds
+    /// (and directories typically have no $DATA attribute at all, so
+    /// ParseAttributes's hasDataAttr requirement would reject them anyway).
+    /// </summary>
+    private static bool TryParseFileNameOnly(byte[] record, out string? name, out long parentRef)
+    {
+        name = null;
+        parentRef = -1;
+        ushort attrOffset = BitConverter.ToUInt16(record, 0x14);
+        int pos = attrOffset;
+
+        while (pos + 8 <= record.Length)
+        {
+            uint attrType = BitConverter.ToUInt32(record, pos);
+            if (attrType == 0xFFFFFFFF) break;
+            uint attrLen = BitConverter.ToUInt32(record, pos + 4);
+            if (attrLen == 0 || pos + attrLen > record.Length) break;
+
+            if (attrType == 0x30) // $FILE_NAME
+            {
+                ushort valOffset = BitConverter.ToUInt16(record, pos + 0x14);
+                int vp = pos + valOffset;
+                if (vp + 0x42 <= record.Length)
+                {
+                    long candidateParent = BitConverter.ToInt64(record, vp) & 0x0000FFFFFFFFFFFF;
+                    byte nameLen = record[vp + 0x40];
+                    byte nameSpace = record[vp + 0x41];
+                    int nameBytesOffset = vp + 0x42;
+                    if (nameBytesOffset + nameLen * 2 <= record.Length && nameLen > 0)
+                    {
+                        string candidate = Encoding.Unicode.GetString(record, nameBytesOffset, nameLen * 2);
+                        if (name == null || nameSpace != 2) // prefer Win32 namespace over the 8.3 DOS alias
+                        {
+                            name = candidate;
+                            parentRef = candidateParent;
+                        }
+                    }
+                }
+            }
+            pos += (int)attrLen;
+        }
+        return name != null;
     }
 
     private Recoverability EstimateRecoverability(List<(long Lcn, long ClusterCount)> runs)

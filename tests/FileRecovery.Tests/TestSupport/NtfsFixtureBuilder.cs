@@ -22,6 +22,7 @@ public static class NtfsFixtureBuilder
         public bool InUse;
         public bool IsDirectory;
         public string? FileName;
+        public long ParentRef = 5; // NTFS root directory record number, unless overridden
         public DateTime? Modified;
         public byte[]? ResidentData;
         public List<(long Lcn, long ClusterCount)>? NonResidentRuns;
@@ -64,7 +65,7 @@ public static class NtfsFixtureBuilder
             {
                 int p = pos;
                 if (spec.FileName != null)
-                    p = WriteFileNameAttribute(buf, p, parentRef: 5, spec.Modified ?? DateTime.UtcNow, spec.FileName);
+                    p = WriteFileNameAttribute(buf, p, spec.ParentRef, spec.Modified ?? DateTime.UtcNow, spec.FileName);
                 if (spec.ResidentData != null)
                     p = WriteResidentDataAttribute(buf, p, spec.ResidentData);
                 else if (spec.NonResidentRuns != null)

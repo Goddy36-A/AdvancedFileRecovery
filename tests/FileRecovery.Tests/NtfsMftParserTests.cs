@@ -238,4 +238,103 @@ public class NtfsMftParserTests
         var file = Assert.Single(found);
         Assert.Equal(Recoverability.Unknown, file.Recoverability);
     }
+
+    // --- Original path reconstruction ---
+
+    [Fact]
+    public void ScanDeletedEntries_FileDirectlyUnderRoot_ResolvesToSlashFileName()
+    {
+        var records = new List<RecordSpec>
+        {
+            new RecordSpec(),
+            new RecordSpec { InUse = false, FileName = "readme.txt", ParentRef = 5, ResidentData = new byte[] { 1 } },
+        };
+
+        byte[] volume = BuildVolume(TotalClusters, MftStartCluster, records);
+        using var reader = new MemoryRawReader(volume);
+        var parser = new NtfsMftParser(reader);
+        Assert.True(parser.TryReadBootSector(out _));
+
+        var found = parser.ScanDeletedEntries(null, CancellationToken.None, null);
+
+        var file = Assert.Single(found);
+        Assert.Equal(@"\readme.txt", file.OriginalPath);
+    }
+
+    [Fact]
+    public void ScanDeletedEntries_FileInNestedIntactFolders_ReconstructsFullPath()
+    {
+        // record1 = "Users" (root's child), record2 = "Bob" (Users' child),
+        // record3 = "Documents" (Bob's child), record4 = deleted file in Documents.
+        // All three ancestor folders are still live/intact — the common real-world
+        // case: the user deleted a file, not the folders it lived in.
+        var records = new List<RecordSpec>
+        {
+            new RecordSpec(),
+            new RecordSpec { InUse = true, IsDirectory = true, FileName = "Users", ParentRef = 5 },
+            new RecordSpec { InUse = true, IsDirectory = true, FileName = "Bob", ParentRef = 1 },
+            new RecordSpec { InUse = true, IsDirectory = true, FileName = "Documents", ParentRef = 2 },
+            new RecordSpec { InUse = false, FileName = "report.docx", ParentRef = 3, ResidentData = new byte[] { 1, 2, 3 } },
+        };
+
+        byte[] volume = BuildVolume(TotalClusters, MftStartCluster, records);
+        using var reader = new MemoryRawReader(volume);
+        var parser = new NtfsMftParser(reader);
+        Assert.True(parser.TryReadBootSector(out _));
+
+        var found = parser.ScanDeletedEntries(null, CancellationToken.None, null);
+
+        var file = Assert.Single(found);
+        Assert.Equal(@"\Users\Bob\Documents\report.docx", file.OriginalPath);
+    }
+
+    [Fact]
+    public void ScanDeletedEntries_ParentDirectoryAlsoGone_FallsBackToNullPath()
+    {
+        // record1's slot IS a valid "FILE" record (BuildRawRecord always writes the
+        // magic), but it has no $FILE_NAME attribute at all — matching a corrupted
+        // or already-recycled parent directory record. The parent chain can't be
+        // walked past it. The file itself should still be found; only OriginalPath
+        // should degrade to null (filename-only display).
+        var records = new List<RecordSpec>
+        {
+            new RecordSpec(),
+            new RecordSpec(), // record1 left as an empty placeholder — not a valid parent directory
+            new RecordSpec { InUse = false, FileName = "orphaned.jpg", ParentRef = 1, ResidentData = new byte[] { 1 } },
+        };
+
+        byte[] volume = BuildVolume(TotalClusters, MftStartCluster, records);
+        using var reader = new MemoryRawReader(volume);
+        var parser = new NtfsMftParser(reader);
+        Assert.True(parser.TryReadBootSector(out _));
+
+        var found = parser.ScanDeletedEntries(null, CancellationToken.None, null);
+
+        var file = Assert.Single(found, f => f.Name == "orphaned.jpg");
+        Assert.Null(file.OriginalPath);
+    }
+
+    [Fact]
+    public void ScanDeletedEntries_CyclicParentChain_FallsBackToNullPathInsteadOfHanging()
+    {
+        // record1's parent is record2, and record2's parent is record1 — neither
+        // ever reaches the root. Must detect the cycle and give up, not hang.
+        var records = new List<RecordSpec>
+        {
+            new RecordSpec(),
+            new RecordSpec { InUse = true, IsDirectory = true, FileName = "A", ParentRef = 2 },
+            new RecordSpec { InUse = true, IsDirectory = true, FileName = "B", ParentRef = 1 },
+            new RecordSpec { InUse = false, FileName = "stuck.txt", ParentRef = 1, ResidentData = new byte[] { 1 } },
+        };
+
+        byte[] volume = BuildVolume(TotalClusters, MftStartCluster, records);
+        using var reader = new MemoryRawReader(volume);
+        var parser = new NtfsMftParser(reader);
+        Assert.True(parser.TryReadBootSector(out _));
+
+        var found = parser.ScanDeletedEntries(null, CancellationToken.None, null);
+
+        var file = Assert.Single(found, f => f.Name == "stuck.txt");
+        Assert.Null(file.OriginalPath);
+    }
 }
