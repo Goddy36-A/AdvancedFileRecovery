@@ -50,6 +50,58 @@ public sealed class ExFatParser
     private long ClusterToOffset(uint cluster) =>
         (_clusterHeapOffsetSectors + (long)(cluster - 2) * (1 << _sectorsPerClusterShift)) * _bytesPerSector;
 
+    /// <summary>Reads one 32-bit exFAT FAT entry for the given cluster.</summary>
+    private uint ReadFatEntry(uint cluster)
+    {
+        long offset = _fatOffsetSectors * _bytesPerSector + (long)cluster * 4;
+        byte[] bytes = _reader.ReadBytes(offset, 4);
+        return BitConverter.ToUInt32(bytes, 0);
+    }
+
+    /// <summary>
+    /// Enumerates the clusters belonging to a directory or file stream.
+    ///
+    /// exFAT lets a stream be marked "NoFatChain" (GeneralSecondaryFlags bit 1)
+    /// when it's contiguously allocated — and critically, the FAT is allowed to
+    /// be left unpopulated (zeroed) for such streams, since there's no chain to
+    /// record. Walking the FAT for a NoFatChain stream would see those zeros as
+    /// "free/end of chain" and stop after one cluster — silently truncating the
+    /// very common case of an unfragmented directory. So NoFatChain streams are
+    /// enumerated by simple cluster-number increment instead of a FAT lookup;
+    /// only genuinely fragmented (chain-allocated) streams walk the FAT.
+    /// </summary>
+    private IEnumerable<uint> EnumerateClusters(uint firstCluster, long dataLength, bool noFatChain, int maxClusters = 200_000)
+    {
+        if (firstCluster < 2) yield break;
+
+        if (noFatChain)
+        {
+            long clusterCount = _bytesPerCluster > 0 ? (dataLength + _bytesPerCluster - 1) / _bytesPerCluster : 0;
+            if (clusterCount <= 0) clusterCount = 1;
+            for (long i = 0; i < clusterCount && i < maxClusters; i++)
+            {
+                uint c = (uint)(firstCluster + i);
+                if (c < 2 || c >= _clusterCount + 2) yield break;
+                yield return c;
+            }
+        }
+        else
+        {
+            uint cluster = firstCluster;
+            var seen = new HashSet<uint>();
+            int count = 0;
+            while (cluster >= 2 && cluster < 0xFFFFFFF7 && count < maxClusters)
+            {
+                if (!seen.Add(cluster)) yield break; // cycle guard against a corrupted chain
+                yield return cluster;
+                count++;
+                uint next = ReadFatEntry(cluster);
+                if (next < 2 || next >= 0xFFFFFFF7) yield break; // free, bad, or end-of-chain marker
+                cluster = next;
+            }
+        }
+    }
+
     public List<RecoverableFile> ScanDeletedEntries(IProgress<ScanProgress>? progress, CancellationToken ct,
         HashSet<FileCategory>? categoryFilter)
     {
@@ -71,7 +123,9 @@ public sealed class ExFatParser
             sw.Restart();
         }
 
-        WalkDirectory(_rootDirCluster, results, counts, visited, categoryFilter, ct, Report);
+        // The root directory is always FAT-chain allocated per the exFAT spec —
+        // there's no Stream Extension entry for the root to carry a NoFatChain flag.
+        WalkDirectory(_rootDirCluster, dataLength: 0, noFatChain: false, results, counts, visited, categoryFilter, ct, Report);
 
         progress?.Report(new ScanProgress
         {
@@ -82,21 +136,20 @@ public sealed class ExFatParser
         return results;
     }
 
-    private void WalkDirectory(uint startCluster, List<RecoverableFile> results, Dictionary<FileCategory, int> counts,
-        HashSet<uint> visited, HashSet<FileCategory>? categoryFilter, CancellationToken ct, Action report)
+    private void WalkDirectory(uint startCluster, long dataLength, bool noFatChain, List<RecoverableFile> results,
+        Dictionary<FileCategory, int> counts, HashSet<uint> visited, HashSet<FileCategory>? categoryFilter,
+        CancellationToken ct, Action report)
     {
-        var subDirs = new List<uint>();
-        uint cluster = startCluster;
-        int guard = 0;
+        var subDirs = new List<(uint FirstCluster, long DataLength, bool NoFatChain)>();
 
-        while (cluster >= 2 && cluster < _clusterCount + 2 && guard++ < 200_000)
+        foreach (uint cluster in EnumerateClusters(startCluster, dataLength, noFatChain))
         {
             ct.ThrowIfCancellationRequested();
-            if (!visited.Add(cluster)) break;
+            if (!visited.Add(cluster)) continue;
 
             byte[] data;
             try { data = _reader.ReadBytes(ClusterToOffset(cluster), _bytesPerCluster); }
-            catch (IOException) { break; }
+            catch (IOException) { continue; }
 
             for (int off = 0; off + 32 <= data.Length; off += 32)
             {
@@ -104,21 +157,25 @@ public sealed class ExFatParser
                 bool inUse = (entryType & 0x80) != 0;
                 byte typeCode = (byte)(entryType & 0x7F);
 
-                if (typeCode != 0x05 /*FileDirEntry cleared*/ ) continue; // only interested in deleted file entry-set heads
-                if (inUse) continue; // still allocated — not deleted
+                if (typeCode != 0x05 /*FileDirEntry, cleared-of-in-use-bit form*/) continue;
 
-                // Deleted File Directory Entry found. SecondaryCount tells us how many
-                // entries follow (stream extension + file-name entries).
                 byte secondaryCount = data[off + 1];
                 if (secondaryCount < 1 || off + (secondaryCount + 1) * 32 > data.Length) continue;
 
                 int streamOff = off + 32;
+                bool streamInUse = (data[streamOff] & 0x80) != 0;
                 byte streamType = (byte)(data[streamOff] & 0x7F);
-                if (streamType != 0x40 /*Stream Extension cleared*/) continue;
+                if (streamType != 0x40 /*Stream Extension, cleared form*/) continue;
+                if (inUse != streamInUse) continue; // entry-set head and stream extension disagree — corrupted, skip
 
+                ushort attributes = BitConverter.ToUInt16(data, off + 4);
+                bool isDirectory = (attributes & 0x10) != 0;
+
+                byte generalSecondaryFlags = data[streamOff + 1];
+                bool subNoFatChain = (generalSecondaryFlags & 0x02) != 0;
                 byte nameLen = data[streamOff + 3];
                 uint firstCluster = BitConverter.ToUInt32(data, streamOff + 20);
-                ulong dataLength = BitConverter.ToUInt64(data, streamOff + 24);
+                ulong dataLen = BitConverter.ToUInt64(data, streamOff + 24);
 
                 var nameBuilder = new StringBuilder();
                 for (int n = 2; n <= secondaryCount; n++)
@@ -140,6 +197,18 @@ public sealed class ExFatParser
                 string name = nameBuilder.Length > 0 ? nameBuilder.ToString() : $"_recovered_{firstCluster:X}";
                 if (name.Length > (int)nameLen && nameLen > 0) name = name[..nameLen];
 
+                if (inUse)
+                {
+                    // A live, intact directory — recurse into it so deleted files inside
+                    // still-existing folders are found too (the common real case: the
+                    // user deleted a FILE, not the folder it was in).
+                    if (isDirectory && firstCluster >= 2)
+                        subDirs.Add((firstCluster, (long)dataLen, subNoFatChain));
+                    continue;
+                }
+
+                if (isDirectory) continue; // a deleted folder itself isn't a recoverable "file"
+
                 string ext = Path.GetExtension(name);
                 var category = FileSignatureCatalog.CategoryForExtension(ext);
                 if (categoryFilter != null && !categoryFilter.Contains(category))
@@ -150,7 +219,7 @@ public sealed class ExFatParser
                 var runs = new List<ClusterRun>();
                 if (firstCluster >= 2 && _bytesPerCluster > 0)
                 {
-                    long clusterCount = ((long)dataLength + _bytesPerCluster - 1) / _bytesPerCluster;
+                    long clusterCount = ((long)dataLen + _bytesPerCluster - 1) / _bytesPerCluster;
                     if (clusterCount == 0) clusterCount = 1;
                     long byteOffset = ClusterToOffset(firstCluster);
                     long lengthBytes = clusterCount * _bytesPerCluster;
@@ -161,27 +230,24 @@ public sealed class ExFatParser
                 {
                     Id = Guid.NewGuid().ToString("N"),
                     Name = name,
-                    SizeBytes = (long)dataLength,
+                    SizeBytes = (long)dataLen,
                     Category = category,
                     Extension = ext,
                     FromCarving = false,
-                    Recoverability = EstimateRecoverability(runs, ext, (long)dataLength, firstCluster >= 2),
+                    Recoverability = EstimateRecoverability(runs, ext, (long)dataLen, firstCluster >= 2),
                 };
                 file.ClusterRuns.AddRange(runs);
                 results.Add(file);
                 counts[category]++;
                 report();
             }
-
-            // exFAT directories are themselves cluster chains; without walking the FAT
-            // (skipped here for brevity/performance) we conservatively read only the
-            // first cluster of large directories, which covers the common case for
-            // removable media directory sizes.
-            break;
         }
 
         foreach (var sub in subDirs)
-            WalkDirectory(sub, results, counts, visited, categoryFilter, ct, report);
+        {
+            ct.ThrowIfCancellationRequested();
+            WalkDirectory(sub.FirstCluster, sub.DataLength, sub.NoFatChain, results, counts, visited, categoryFilter, ct, report);
+        }
     }
 
     /// <summary>
